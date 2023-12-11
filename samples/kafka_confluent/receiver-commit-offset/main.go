@@ -29,13 +29,12 @@ func main() {
 		"bootstrap.servers": "127.0.0.1:9092",
 		"group.id":          "test-confluent-offset-id",
 		// "auto.offset.reset":  "earliest",
-		"auto.offset.reset":  "latest",
 		"enable.auto.commit": "false",
 	}), kafka_confluent.WithReceiverTopics([]string{topic}))
 
 	defer receiver.Close(ctx)
 
-	c, err := cloudevents.NewClient(receiver, client.WithPollGoroutines(1))
+	c, err := cloudevents.NewClient(receiver, client.WithPollGoroutines(1), client.WithUUIDs())
 	if err != nil {
 		log.Fatalf("failed to create client, %v", err)
 	}
@@ -48,8 +47,13 @@ func main() {
 				return
 			default:
 				if lastCommitOffset < int64(offsetToCommit.Offset) {
+					offsetCtx := kafka_confluent.CommitOffsetCtx(ctx, []kafka.TopicPartition{offsetToCommit})
+					res := c.Send(offsetCtx, kafka_confluent.NewOffsetEvent())
+					if res != nil {
+						log.Printf("failed to commit offset: %v", res)
+						return
+					}
 					fmt.Printf(">> commit offset %s[%d:%d] \n", *offsetToCommit.Topic, offsetToCommit.Partition, offsetToCommit.Offset)
-					c.Send(kafka_confluent.CommitOffsetCtx(ctx, []kafka.TopicPartition{offsetToCommit}), cloudevents.NewEvent())
 					lastCommitOffset = int64(offsetToCommit.Offset)
 				}
 			}
@@ -73,7 +77,7 @@ func receive(ctx context.Context, event cloudevents.Event) {
 		log.Printf("failed to parse offset: %s", err)
 		return
 	}
-	if offset%5 == 0 {
+	if offset%3 == 0 {
 		offsetToCommit.Offset = kafka.Offset(offset)
 	}
 	fmt.Printf("%s[%s:%s] \n", ext[kafka_confluent.KafkaTopicKey],

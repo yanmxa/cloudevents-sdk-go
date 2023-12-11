@@ -148,6 +148,13 @@ func (p *Protocol) OpenInbound(ctx context.Context) error {
 	defer p.consumerMux.Unlock()
 	logger := cecontext.LoggerFrom(ctx)
 
+	// Query committed offsets for each partition
+	if positions := CommitOffsetFrom(ctx); positions != nil {
+		if err := p.consumer.Assign(positions); err != nil {
+			return err
+		}
+	}
+
 	logger.Infof("Subscribing to topics: %v", p.consumerTopics)
 	err := p.consumer.SubscribeTopics(p.consumerTopics, p.consumerRebalanceCb)
 	if err != nil {
@@ -158,7 +165,6 @@ func (p *Protocol) OpenInbound(ctx context.Context) error {
 	for run {
 		select {
 		case <-ctx.Done():
-			logger.Info("Context canceled")
 			run = false
 		default:
 			ev := p.consumer.Poll(p.consumerPollTimeout)

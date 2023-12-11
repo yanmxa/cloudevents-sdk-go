@@ -9,6 +9,8 @@ import (
 	"context"
 	"fmt"
 
+	cloudevents "github.com/cloudevents/sdk-go/v2"
+
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 )
 
@@ -94,7 +96,7 @@ func WithReceiver(consumer *kafka.Consumer) Option {
 	}
 }
 
-// Opaque key type used to store offsets
+// Opaque key type used to store offsets: assgin offset from ctx, commit offset from context
 type commitOffsetType struct{}
 
 var offsetKey = commitOffsetType{}
@@ -113,4 +115,16 @@ func CommitOffsetFrom(ctx context.Context) []kafka.TopicPartition {
 		}
 	}
 	return nil
+}
+
+const (
+	OffsetEventSource = "io.cloudevents.kafka.confluent.consumer"
+	OffsetEventType   = "io.cloudevents.kafka.confluent.consumer.offsets"
+)
+
+func NewOffsetEvent() cloudevents.Event {
+	e := cloudevents.NewEvent()
+	e.SetSource(OffsetEventSource)
+	e.SetType(OffsetEventType)
+	return e
 }
