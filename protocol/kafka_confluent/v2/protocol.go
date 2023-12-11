@@ -35,9 +35,9 @@ type Protocol struct {
 	consumerMux         sync.Mutex
 
 	producer                 *kafka.Producer
+	producerDeliveryChan     chan kafka.Event // optional
 	producerDefaultTopic     string           // optional
 	producerDefaultPartition int32            // optional
-	producerDeliveryChan     chan kafka.Event // optional
 
 	// receiver
 	incoming chan *kafka.Message
@@ -47,6 +47,7 @@ func New(ctx context.Context, opts ...Option) (*Protocol, error) {
 	p := &Protocol{
 		producerDefaultPartition: kafka.PartitionAny,
 		consumerPollTimeout:      100,
+		incoming:                 make(chan *kafka.Message),
 	}
 	if err := p.applyOptions(opts...); err != nil {
 		return nil, err
@@ -64,7 +65,13 @@ func New(ctx context.Context, opts ...Option) (*Protocol, error) {
 			return nil, err
 		}
 		p.producer = producer
+		p.producerDeliveryChan = make(chan kafka.Event)
 	}
+
+	if p.kafkaConfigMap == nil && p.producer == nil && p.consumer == nil {
+		return nil, fmt.Errorf("At least one of the following to initialize the protocol: config, producer, or consumer.")
+	}
+
 	return p, nil
 }
 
@@ -117,7 +124,16 @@ func (p *Protocol) Send(ctx context.Context, in binding.Message, transformers ..
 		return err
 	}
 
-	return p.producer.Produce(kafkaMsg, p.producerDeliveryChan)
+	err = p.producer.Produce(kafkaMsg, p.producerDeliveryChan)
+	if err != nil {
+		return err
+	}
+	e := <-p.producerDeliveryChan
+	m := e.(*kafka.Message)
+	if m.TopicPartition.Error != nil {
+		return m.TopicPartition.Error
+	}
+	return nil
 }
 
 func (p *Protocol) OpenInbound(ctx context.Context) error {
@@ -142,6 +158,7 @@ func (p *Protocol) OpenInbound(ctx context.Context) error {
 	for run {
 		select {
 		case <-ctx.Done():
+			logger.Info("Context canceled")
 			run = false
 		default:
 			ev := p.consumer.Poll(p.consumerPollTimeout)
@@ -154,7 +171,7 @@ func (p *Protocol) OpenInbound(ctx context.Context) error {
 			case kafka.Error:
 				// Errors should generally be considered informational, the client
 				// will try to automatically recover.
-				logger.Warnf("%% Error: %v: %v\n", e.Code(), e)
+				logger.Warnf("Consumer get a kafka error %v: %v\n", e.Code(), e)
 			default:
 				logger.Infof("Ignored %v\n", e)
 			}
@@ -186,5 +203,7 @@ func (p *Protocol) Close(ctx context.Context) error {
 	if p.producer != nil {
 		p.producer.Close()
 	}
+	close(p.producerDeliveryChan)
+	close(p.incoming)
 	return nil
 }
