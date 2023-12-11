@@ -57,6 +57,48 @@ func TopicFrom(ctx context.Context) string {
 	return ""
 }
 
+// Opaque key type used to store topic partition
+type topicPartitionKeyType struct{}
+
+var topicPartitionKey = topicPartitionKeyType{}
+
+// WithTopicPartition returns back a new context with the given partition.
+func WithTopicPartition(ctx context.Context, partition int32) context.Context {
+	return context.WithValue(ctx, topicPartitionKey, partition)
+}
+
+// TopicPartitionFrom looks in the given context and returns `partition` as a int64 if found and valid, otherwise -1.
+func TopicPartitionFrom(ctx context.Context) int32 {
+	c := ctx.Value(topicPartitionKey)
+	if c != nil {
+		if s, ok := c.(int32); ok {
+			return s
+		}
+	}
+	return -1
+}
+
+// Opaque key type used to store message key
+type messageKeyType struct{}
+
+var keyForMessageKey = messageKeyType{}
+
+// WithMessageKey returns back a new context with the given messageKey.
+func WithMessageKey(ctx context.Context, messageKey string) context.Context {
+	return context.WithValue(ctx, keyForMessageKey, messageKey)
+}
+
+// MessageKeyFrom looks in the given context and returns `messageKey` as a string if found and valid, otherwise "".
+func MessageKeyFrom(ctx context.Context) string {
+	c := ctx.Value(keyForMessageKey)
+	if c != nil {
+		if s, ok := c.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
 // Opaque key type used to store retry parameters
 type retriesKeyType struct{}
 

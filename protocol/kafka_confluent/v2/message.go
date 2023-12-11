@@ -8,6 +8,7 @@ package kafka_confluent
 import (
 	"bytes"
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/cloudevents/sdk-go/v2/binding"
@@ -34,7 +35,7 @@ var specs = spec.WithPrefix(prefix)
 // This message *can* be read several times safely
 type Message struct {
 	internal   *kafka.Message
-	properties map[string]interface{}
+	properties map[string][]byte
 	format     format.Format
 	version    spec.Version
 }
@@ -47,10 +48,10 @@ var (
 
 func NewMessage(msg *kafka.Message) *Message {
 	var contentType, contentVersion string
-	properties := make(map[string]interface{}, len(msg.Headers)+3)
+	properties := make(map[string][]byte, len(msg.Headers)+3)
 	for _, header := range msg.Headers {
 		k := strings.ToLower(string(header.Key))
-		if k == contentTypeKey {
+		if k == strings.ToLower(contentTypeKey) {
 			contentType = string(header.Value)
 		}
 		if k == specs.PrefixedSpecVersionName() {
@@ -60,10 +61,12 @@ func NewMessage(msg *kafka.Message) *Message {
 	}
 
 	// add the kafka message key, topic, partition and partition key to the properties
-	properties[prefix+KafkaOffsetKey] = msg.TopicPartition.Offset
-	properties[prefix+KafkaPartitionKey] = msg.TopicPartition.Partition
-	properties[prefix+KafkaTopicKey] = *msg.TopicPartition.Topic
-	properties[prefix+KafkaMessageKey] = msg.Key
+	properties[prefix+KafkaOffsetKey] = []byte(strconv.FormatInt(int64(msg.TopicPartition.Offset), 10))
+	properties[prefix+KafkaPartitionKey] = []byte(strconv.FormatInt(int64(msg.TopicPartition.Partition), 10))
+	properties[prefix+KafkaTopicKey] = []byte(*msg.TopicPartition.Topic)
+	if msg.Key != nil {
+		properties[prefix+KafkaMessageKey] = msg.Key
+	}
 
 	message := &Message{
 		internal:   msg,
@@ -105,12 +108,12 @@ func (m *Message) ReadBinary(ctx context.Context, encoder binding.BinaryWriter) 
 		if strings.HasPrefix(k, prefix) {
 			attr := m.version.Attribute(k)
 			if attr != nil {
-				err = encoder.SetAttribute(attr, v)
+				err = encoder.SetAttribute(attr, string(v))
 			} else {
-				err = encoder.SetExtension(strings.TrimPrefix(k, prefix), v)
+				err = encoder.SetExtension(strings.TrimPrefix(k, prefix), string(v))
 			}
-		} else if k == contentTypeKey {
-			err = encoder.SetAttribute(m.version.AttributeFromKind(spec.DataContentType), v)
+		} else if k == strings.ToLower(contentTypeKey) {
+			err = encoder.SetAttribute(m.version.AttributeFromKind(spec.DataContentType), string(v))
 		}
 		if err != nil {
 			return err
@@ -129,10 +132,10 @@ func (m *Message) Finish(error) error {
 
 func (m *Message) GetAttribute(k spec.Kind) (spec.Attribute, interface{}) {
 	attr := m.version.AttributeFromKind(k)
-	if attr != nil {
-		return attr, m.properties[attr.PrefixedName()]
+	if attr == nil {
+		return nil, nil
 	}
-	return nil, nil
+	return attr, m.properties[attr.PrefixedName()]
 }
 
 func (m *Message) GetExtension(name string) interface{} {

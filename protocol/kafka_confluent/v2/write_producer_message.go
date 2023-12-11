@@ -17,62 +17,30 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 )
 
-type (
-	// used to indicate that the message key is needed
-	kafkaMessageKey struct{}
-	// extends the kafka.Message to support the interfaces for the converting it to binding.Message
-	kafkaMessageWriter kafka.Message
-)
+// extends the kafka.Message to support the interfaces for the converting it to binding.Message
+type kafkaMessageWriter kafka.Message
 
 var (
 	_ binding.StructuredWriter = (*kafkaMessageWriter)(nil)
 	_ binding.BinaryWriter     = (*kafkaMessageWriter)(nil)
 )
 
-// WritePubMessage fills the provided pubMessage with the message m.
+// WriteProducerMessage fills the provided pubMessage with the message m.
 // Using context you can tweak the encoding processing (more details on binding.Write documentation).
-func WritePubMessage(ctx context.Context, m binding.Message, kafkaMsg *kafka.Message,
+func WriteProducerMessage(ctx context.Context, in binding.Message, kafkaMsg *kafka.Message,
 	transformers ...binding.Transformer,
 ) error {
 	structuredWriter := (*kafkaMessageWriter)(kafkaMsg)
 	binaryWriter := (*kafkaMessageWriter)(kafkaMsg)
 
-	hasMessageKey := binding.GetOrDefaultFromCtx(ctx, kafkaMessageKey{}, true).(bool)
-
-	// if the message key is needed, then add the transformer to extract it
-	var messageKey string
-	if hasMessageKey {
-		transformers = append(transformers, binding.TransformerFunc(
-			func(r binding.MessageMetadataReader, w binding.MessageMetadataWriter) error {
-				ext := r.GetExtension(KafkaMessageKey)
-				if types.IsZero(ext) {
-					return nil
-				}
-				extStr, err := types.Format(ext)
-				if err != nil {
-					return err
-				}
-				messageKey = extStr
-				return nil
-			}),
-		)
-	}
-
 	_, err := binding.Write(
 		ctx,
-		m,
+		in,
 		structuredWriter,
 		binaryWriter,
 		transformers...,
 	)
-	if messageKey != "" {
-		kafkaMsg.Key = []byte(messageKey)
-	}
 	return err
-}
-
-func WithoutMessageKeyContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, kafkaMessageKey{}, false)
 }
 
 func (b *kafkaMessageWriter) SetStructuredEvent(ctx context.Context, f format.Format, event io.Reader) error {
