@@ -13,7 +13,7 @@ import (
 
 	"github.com/cloudevents/sdk-go/v2/binding"
 	"github.com/cloudevents/sdk-go/v2/protocol"
-	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 
 	cecontext "github.com/cloudevents/sdk-go/v2/context"
 )
@@ -43,13 +43,8 @@ type Protocol struct {
 	incoming chan *kafka.Message
 }
 
-func New(ctx context.Context, config *kafka.ConfigMap, opts ...Option) (*Protocol, error) {
-	if config == nil {
-		return nil, fmt.Errorf("the kafka.ConfigMap must not be nil")
-	}
-
+func New(ctx context.Context, opts ...Option) (*Protocol, error) {
 	p := &Protocol{
-		kafkaConfigMap:           config,
 		producerDefaultPartition: kafka.PartitionAny,
 		consumerPollTimeout:      100,
 	}
@@ -57,13 +52,13 @@ func New(ctx context.Context, config *kafka.ConfigMap, opts ...Option) (*Protoco
 		return nil, err
 	}
 
-	if p.consumerTopics != nil {
+	if p.consumerTopics != nil && p.consumer == nil && p.kafkaConfigMap != nil {
 		consumer, err := kafka.NewConsumer(p.kafkaConfigMap)
 		if err != nil {
 			return nil, err
 		}
 		p.consumer = consumer
-	} else {
+	} else if p.producer == nil && p.kafkaConfigMap != nil {
 		producer, err := kafka.NewProducer(p.kafkaConfigMap)
 		if err != nil {
 			return nil, err
@@ -82,12 +77,20 @@ func (p *Protocol) applyOptions(opts ...Option) error {
 	return nil
 }
 
-func (p *Protocol) Send(ctx context.Context, in binding.Message, transformers ...binding.Transformer) error {
+func (p *Protocol) Send(ctx context.Context, in binding.Message, transformers ...binding.Transformer) (err error) {
+	// support the commit offset from the context
+	offsets := CommitOffsetFrom(ctx)
+	if offsets != nil {
+		if p.consumer == nil {
+			return fmt.Errorf("the consumer client must not be nil")
+		}
+		_, err = p.consumer.CommitOffsets(offsets)
+		return err
+	}
+
 	if p.producer == nil {
 		return fmt.Errorf("the producer client must not be nil")
 	}
-
-	var err error
 	defer in.Finish(err)
 
 	kafkaMsg := &kafka.Message{
@@ -121,9 +124,12 @@ func (p *Protocol) OpenInbound(ctx context.Context) error {
 	if p.consumer == nil {
 		return fmt.Errorf("the consumer client must not be nil")
 	}
+	if p.consumerTopics == nil {
+		return fmt.Errorf("the consumer topics must not be nil")
+	}
+
 	p.consumerMux.Lock()
 	defer p.consumerMux.Unlock()
-
 	logger := cecontext.LoggerFrom(ctx)
 
 	logger.Infof("Subscribing to topics: %v", p.consumerTopics)
